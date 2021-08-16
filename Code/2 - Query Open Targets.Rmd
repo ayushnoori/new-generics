@@ -1,5 +1,5 @@
 ---
-title: Off-Patent Drug Look-Up
+title: Query Open Targets
 subtitle: Ayush Noori
 output:
   prettydoc::html_pretty:
@@ -31,6 +31,10 @@ library(openxlsx)
 # string manipulation
 library(stringi)
 
+# GraphQL API
+library(httr)
+library(jsonlite)
+
 # utilities
 library(brainstorm)
 
@@ -41,122 +45,65 @@ Note that directories are relative to the R project path.
 ```{r define-directores}
 
 # set directories
-dir = c("C:/Users/ayush/OneDrive/Extracurricular/Entrepreneurship/gener8tor Tech Transfer/DTC Pharma/Off-Patent, Off-Exclusivity Drugs")
-ddir = file.path(dir, "2021.07.20 - Drugs at FDA")
+otdir = file.path("Data", "2 - Open Targets")
+ddir = file.path("Results", "1 - Query Drugs at FDA")
+rdir = file.path("Results", "2 - Query Open Targets")
 
 ```
 
 # Read Data
 
-First, select dataset for analysis.
+First, read datasets for analysis.
 
-```{r select-dataset}
+```{r read-data}
 
-opt = c("Part I", "Part II", "Appendix") %>% purrr::set_names(.)
-nm = opt[menu(opt, title = "Please select the desired dataset for analysis.")]
-
-```
-
-Read drugs which are off-patent and off-exclusivity.
-
-```{r read-drugs}
-
-# read data
-drugs = as.data.table(read.xlsx(file.path(dir, "2021.06.14 - Off-Patent Drugs.xlsx"), sheet = nm, sep.names = " "))[, 1:3]
-
-# make column names syntactically valid
-colnames(drugs) = gsub(" ", "", colnames(drugs))
-
-# create index column
-drugs[, ApplNo := gsub("N0", "", ApprovedNDA, fixed = T)] %>%
-  .[, ApplNo := gsub("N", "", ApplNo, fixed = T)] %>%
-  .[, ApplNo := as.integer(ApplNo)]
+# read parsed Drugs at FDA data
+flist = list.files(ddir, pattern = "*.csv")
+dat = map(flist, ~fread(file.path(ddir, .x)))
+names(dat) = gsub(".csv", "", map(strsplit(flist, " - "), 2))
+dat = dat[c(2, 3, 1)]
 
 ```
 
-Read data downloaded from [the Drugs\@FDA database](https://www.fda.gov/drugs/drug-approvals-and-databases/drugsfda-data-files). Note that while the online database is updated daily, the data files are updated once per week, on Tuesdays.
+# Query Open Targets
 
-```{r read-fda}
+Now, query Open Targets database.
 
-# function to read data
-rd = function(x) { fread(file.path(ddir, x)) }
+```{r query-targets}
 
-# read database files
-flist = list.files(ddir)
-db = map(flist, rd)
-names(db) = gsub("(.txt)|(.csv)", "", flist)
+# set gene ID variable
+gene_id = "ENSG00000091831"
 
-```
+# build query string
+query_string = "
+  query target($ensemblId: String!){
+    target(ensemblId: $ensemblId){
+      id
+      approvedSymbol
+      approvedName
+      bioType
+      genomicLocation{
+        chromosome
+        start
+        end
+        strand
+      }
+    }
+  }
+"
 
-# Merge Data
+# set base URL of GraphQL API endpoint
+base_url = "https://api.platform.opentargets.org/api/v4/graphql"
 
-Collapse products by pasting approved strengths.
+# Set variables object of arguments to be passed to endpoint
+variables = list("ensemblId" = gene_id)
 
-```{r remove-duplicates}
+# Construct POST request body object with query string and variables
+post_body = list(query = query_string, variables = variables)
 
-# # function to paste duplicates
-# paste_duplicates = function(x) {
-#   rem_dup = map_dfc(x, ~paste(unique(.x), collapse = "; "))
-#   return(rem_dup)
-# }
-# 
-# # paste products
-# products = db$Products[, !c("ProductNo", "ReferenceDrug")] %>%
-#   .[, paste_duplicates(.SD), .SDcols = colnames(.), by = "ApplNo"] %>%
-#   .[, -1]
-
-```
-
-Merge the drug list with the FDA datasets to create final table.
-
-```{r merge-data}
-
-# format marketing status
-MarketingStatus = copy(db$MarketingStatus) %>%
-  .[, ID := paste(ApplNo, ProductNo, sep = "_")] %>%
-  .[, .(ID, MarketingStatusID)]
-
-# format application docs
-ApplicationDocs = copy(db$ApplicationDocs) %>%
-  .[SubmissionType == "ORIG"] %>%
-  .[, .SD[which.min(ApplicationDocsDate)], by = "ApplNo"] %>%
-  .[, .(ApplNo, ApplicationDocsTypeID, ApplicationDocsDate, ApplicationDocsURL)]
-
-# merge databases
-mdrugs = merge(drugs, db$Products[, !c("ReferenceDrug")], by = "ApplNo", all.x = T, all.y = F) %>%
-  .[, ID := paste(ApplNo, ProductNo, sep = "_")] %>%
-  merge(MarketingStatus, by = "ID", all.x = T, all.y = F) %>%
-  merge(db$Applications[, !c("ApplPublicNotes", "ApplType")], by = "ApplNo", all.x = T, all.y = F) %>%
-  merge(ApplicationDocs, by = "ApplNo", all.x = T, all.y = F)
-
-# rename columns
-setnames(mdrugs, c("ApplNo", "ProductNo", "DrugName", "ApprovedNDA", "ActiveIngredient", "MarketingStatusID", "SponsorName", "ApplicationDocsTypeID", "ApplicationDocsDate", "ApplicationDocsURL"), c("Application", "Product", "Drug", "NDA", "ActiveIngredients", "Marketing", "Sponsor", "DocumentType", "DocumentDate", "DocumentURL"))
-
-# reorder columns
-mdrugs = mdrugs %>%
-  .[, c("ID", "ActiveIngredients") := NULL] %>%
-  .[order(Application, Product)] %>%
-  setcolorder(c("Application", "Product", "Drug", "NDA", "Marketing", "Sponsor", "Form", "DosageForm", "Strength", "Ingredient"))
-
-# map columns to factors
-mdrugs %>%
-  .[, Marketing := factor(Marketing, levels = db$MarketingStatus_Lookup$MarketingStatusID, labels = db$MarketingStatus_Lookup$MarketingStatusDescription)] %>%
-  .[, DocumentType := factor(DocumentType, levels = db$ApplicationsDocsType_Lookup$ApplicationDocsType_Lookup_ID, labels = db$ApplicationsDocsType_Lookup$ApplicationDocsType_Lookup_Description)] 
-
-# clean dosage form
-mdrugs = mdrugs %>%
-  .[, DosageForm := NULL] %>%
-  .[, Form := gsub(";", " (", Form, fixed = T)] %>%
-  .[, Form := paste0(Form, ")")]
-
-```
-
-# Save Data
-
-Save result to a `.csv` file.
-
-```{r save-data}
-
-fwrite(mdrugs, file.path(dir, paste0("Off-Patent Drugs - ", nm, ".csv")))
+# Perform POST request
+res = httr::POST(url = base_url, body = post_body, encode = "json") %>%
+  httr::content(as = "text", encoding = "UTF-8") %>%
+  fromJSON() %>% .[[1]]
 
 ```

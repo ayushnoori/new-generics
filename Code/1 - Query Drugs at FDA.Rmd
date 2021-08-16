@@ -41,8 +41,8 @@ Note that directories are relative to the R project path.
 ```{r define-directores}
 
 # set directories
-dir = c("C:/Users/ayush/OneDrive/Extracurricular/Entrepreneurship/gener8tor Tech Transfer/DTC Pharma/Off-Patent, Off-Exclusivity Drugs")
-ddir = file.path(dir, "2021.07.20 - Drugs at FDA")
+ddir = file.path("Data", "1 - Drugs at FDA")
+rdir = file.path("Results", "1 - Query Drugs at FDA")
 
 ```
 
@@ -62,7 +62,7 @@ Read drugs which are off-patent and off-exclusivity.
 ```{r read-drugs}
 
 # read data
-drugs = as.data.table(read.xlsx(file.path(dir, "2021.06.14 - Off-Patent Drugs.xlsx"), sheet = nm, sep.names = " "))[, 1:3]
+drugs = as.data.table(read.xlsx(file.path("Data", "2021.06.14 - Off-Patent Drugs.xlsx"), sheet = nm, sep.names = " "))[, 1:3]
 
 # make column names syntactically valid
 colnames(drugs) = gsub(" ", "", colnames(drugs))
@@ -157,6 +157,6 @@ Save result to a `.csv` file.
 
 ```{r save-data}
 
-fwrite(mdrugs, file.path(dir, paste0("Off-Patent Drugs - ", nm, ".csv")))
+fwrite(mdrugs, file.path(rdir, paste0("Off-Patent Drugs - ", nm, ".csv")))
 
 ```

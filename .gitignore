@@ -1,0 +1,5 @@
+# ignore Data subdirectory
+Data/1 - Drugs at FDA/*
+Data/2 - Open Targets/*
+
+.Rproj.user

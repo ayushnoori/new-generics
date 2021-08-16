@@ -1,0 +1,1 @@
+Drugs at FDA database was downloaded on 2021.07.20.
